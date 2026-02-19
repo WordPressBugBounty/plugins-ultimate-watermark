@@ -1,140 +1,210 @@
-jQuery(document).ready(function ($) {
+/**
+ * Ultimate Watermark - Settings Page JavaScript
+ * 
+ * Handles the settings page functionality
+ *
+ * @package UltimateWatermark
+ * @since 2.0.0
+ */
 
-    var selectedElement;
-    var watermarkFileUpload = {
-        frame: function (el) {
-            if (this._frameWatermark)
-                return this._frameWatermark;
+(function($) {
+    'use strict';
 
-            this._frameWatermark = wp.media({
-                title: ultimateWatermarkSettings.title,
-                frame: ultimateWatermarkSettings.frame,
-                button: ultimateWatermarkSettings.button,
-                multiple: ultimateWatermarkSettings.multiple,
-                library: {
-                    type: 'image'
-                }
-            });
-
-            this._frameWatermark.on('open', this.updateFrame).state('library').on('select', this.select);
-            return this._frameWatermark;
+    const SettingsPage = {
+        
+        /**
+         * Initialize the settings page
+         */
+        init: function() {
+            this.bindEvents();
+            this.initForm();
         },
-        select: function () {
-            var _that = this;
-            var attachment = this.frame.state().get('selection').first();
-            console.log('Image selected:', attachment.attributes);
 
-            var elementCard = $(selectedElement).closest('.ultimate-watermark-setting-card');
-            console.log('Element card found:', elementCard.length);
-            selectedElement = null;
-            if ($.inArray(attachment.attributes.mime, ['image/gif', 'image/jpg', 'image/jpeg', 'image/png']) !== -1) {
+        /**
+         * Bind event handlers
+         */
+        bindEvents: function() {
+            // Range slider updates
+            $(document).on('input', '#backup_quality', this.updateBackupQualityValue);
+            
+            // Settings changes
+            $(document).on('change', '#watermark_on', this.togglePostTypesSelection);
+            
+            // Form submission
+            $(document).on('submit', '#ultimate-watermark-settings-form', this.handleFormSubmit);
+            
+            // Keyboard shortcuts
+            $(document).on('keydown', this.handleKeyboardShortcuts);
+        },
 
-                elementCard.find('input.attachment_id').val(attachment.attributes.id);
-                console.log('Set attachment ID:', attachment.attributes.id);
-
-                elementCard.find('.preview-image').find('img').attr('src', attachment.attributes.url);
-                console.log('Set image src:', attachment.attributes.url);
-
-                elementCard.find('.preview-image').show();
-                console.log('Show preview image');
-
-                elementCard.find('.ultimate_watermark_remove_image_button').removeAttr('disabled');
-                var img = new Image();
-                img.src = attachment.attributes.url;
-                img.onload = function () {
-                    elementCard.find('.preview-image').find('p').html(ultimateWatermarkSettings.originalSize + ': ' + this.width + ' ' + ultimateWatermarkSettings.px + ' / ' + this.height + ' ' + ultimateWatermarkSettings.px);
-                    console.log('Image loaded, dimensions:', this.width + 'x' + this.height);
-                }
-
-            } else {
-
-                elementCard.find('.ultimate_watermark_remove_image_button').attr('disabled', 'true');
-                elementCard.find('input.attachment_id').val(0);
-                elementCard.find('.preview-image').hide();
-                elementCard.find('.preview-image').find('p').html('<strong>' + ultimateWatermarkSettings.notAllowedImg + '</strong>');
-
+        /**
+         * Initialize form functionality
+         */
+        initForm: function() {
+            // Initialize backup quality range input if it exists
+            const backupQualityInput = $('#backup_quality');
+            if (backupQualityInput.length > 0) {
+                backupQualityInput.each(function() {
+                    SettingsPage.updateBackupQualityValue.call(this);
+                });
             }
         },
-        init: function () {
-            var _that = this;
-            $('body').on('click', '.ultimate_watermark_upload_image_button', function (e) {
-                e.preventDefault();
-                selectedElement = $(this);
-                console.log('Upload button clicked:', selectedElement);
-                _that.frame().open();
-            });
-            _that.initSlider();
-            _that.displayConditions();
-        },
-        initSlider: function () {
-            var slider = $('.ultimate-watermark-range-slider');
 
-            slider.each(function () {
-                var slider_item = $(this);
-                var handle = slider_item.find('.handle');
-                var max = slider_item.data("max");
-                var min = slider_item.data('min');
-                var value = slider_item.data('value');
-                var step = slider_item.data('step');
-                slider_item.slider({
-                    min: min,
-                    max: max,
-                    value: value,
-                    step: step,
-                    range: "min",
-                    create: function () {
-                        slider_item.closest('.slider-wrap').find('input').val($(this).slider("value"));
-                        handle.text($(this).slider("value"));
-                    },
-                    slide: function (event, ui) {
-                        handle.text(ui.value);
-                        slider_item.closest('.slider-wrap').find('input').val(ui.value);
+        /**
+         * Toggle post types selection based on watermark on setting
+         */
+        togglePostTypesSelection: function() {
+            const watermarkOn = $(this).val();
+            
+            if (watermarkOn === 'selected_post_types') {
+                $('#post-types-selection').show();
+            } else {
+                $('#post-types-selection').hide();
+            }
+        },
+
+        /**
+         * Update backup quality value display
+         */
+        updateBackupQualityValue: function() {
+            if (!this || !$(this).length) {
+                return;
+            }
+            const quality = $(this).val();
+            if (quality !== undefined) {
+                $(this).siblings('.range-value').text(quality + '%');
+            }
+        },
+
+        /**
+         * Handle form submission
+         */
+        handleFormSubmit: function(e) {
+            e.preventDefault();
+            
+            // Show loading state
+            SettingsPage.showLoadingState();
+            
+            // Collect form data manually to include unchecked checkboxes
+            const formData = SettingsPage.collectFormData();
+            
+            // Submit form via AJAX
+            $.ajax({
+                url: ultimateWatermarkSettings.ajaxurl,
+                type: 'POST',
+                data: {
+                    action: 'ultimate_watermark_save_settings',
+                    nonce: ultimateWatermarkSettings.nonce,
+                    form_data: formData
+                },
+                success: function(response) {
+                    SettingsPage.hideLoadingState();
+                    
+                    if (response.success) {
+                        const message = response.data?.message || 'Your settings have been saved successfully!';
+                        
+                        if (typeof UWNotifications !== 'undefined') {
+                            UWNotifications.success('Settings Saved', message, 3000);
+                        } else {
+                            alert('Settings saved successfully!');
+                        }
+                        
+                        // Refresh the page after a short delay to ensure settings are reflected
+                        setTimeout(function() {
+                            window.location.reload();
+                        }, 1500);
+                    } else {
+                        const message = response.data?.message || 'Failed to save settings. Please try again.';
+                        
+                        if (typeof UWNotifications !== 'undefined') {
+                            UWNotifications.error('Save Failed', message, 5000);
+                        } else {
+                            alert('Failed to save settings. Please try again.');
+                        }
                     }
-                });
+                },
+                error: function(xhr, status, error) {
+                    SettingsPage.hideLoadingState();
+                    
+                    if (typeof UWNotifications !== 'undefined') {
+                        UWNotifications.error('Save Failed', 'An error occurred while saving settings. Please try again.', 5000);
+                    } else {
+                        alert('An error occurred while saving settings. Please try again.');
+                    }
+                }
             });
-
-
         },
-        displayConditions: function () {
-            $('body').on('change', '#ultimate_watermark_watermark_on', function () {
-                var value = $(this).val();
-                var el = $('[id^="ultimate_watermark_watermark_on_custom_post_type"]');
-                var tr = el.closest('tr');
-                if (value === 'selected_custom_post_types') {
-                    tr.removeClass('ultimate-watermark-hide');
-                } else {
-                    tr.addClass('ultimate-watermark-hide');
-                }
-            });
 
-            $('body').on('change', '#ultimate_watermark_watermark_size_type', function () {
-                var value = $(this).val();
-                var absWidthTr = $('#ultimate_watermark_absolute_width').closest('tr');
-                var absHeightTr = $('#ultimate_watermark_absolute_height').closest('tr');
-                var scaledTr = $('#ultimate_watermark_scaled_image_width').closest('tr');
-                if (value === 'custom') {
-                    absWidthTr.removeClass('ultimate-watermark-hide');
-                    absHeightTr.removeClass('ultimate-watermark-hide');
-                    scaledTr.addClass('ultimate-watermark-hide');
-                } else if (value === 'scaled') {
-                    absWidthTr.addClass('ultimate-watermark-hide');
-                    absHeightTr.addClass('ultimate-watermark-hide');
-                    scaledTr.removeClass('ultimate-watermark-hide');
-                } else {
-                    absWidthTr.addClass('ultimate-watermark-hide');
-                    absHeightTr.addClass('ultimate-watermark-hide');
-                    scaledTr.addClass('ultimate-watermark-hide');
+        /**
+         * Collect form data including unchecked checkboxes
+         */
+        collectFormData: function() {
+            const form = $('#ultimate-watermark-settings-form');
+            const formData = {};
+            
+            // Get all form elements
+            form.find('input, select, textarea').each(function() {
+                const $this = $(this);
+                const name = $this.attr('name');
+                const type = $this.attr('type');
+                
+                if (name) {
+                    if (type === 'checkbox') {
+                        // For checkboxes, explicitly set to '1' or '0'
+                        const isChecked = $this.is(':checked');
+                        formData[name] = isChecked ? '1' : '0';
+                        
+                    } else if (type === 'radio') {
+                        // For radio buttons, only include if checked
+                        if ($this.is(':checked')) {
+                            formData[name] = $this.val();
+                        }
+                    } else {
+                        // For other inputs, use the value
+                        formData[name] = $this.val();
+                    }
                 }
             });
+            
+            return formData;
+        },
+
+        /**
+         * Show loading state
+         */
+        showLoadingState: function() {
+            $('button[type="submit"]').prop('disabled', true).html('<span class="dashicons dashicons-update"></span> Saving...');
+        },
+
+        /**
+         * Hide loading state
+         */
+        hideLoadingState: function() {
+            $('button[type="submit"]').prop('disabled', false).html('<span class="dashicons dashicons-saved"></span> Save Settings');
+        },
+
+        /**
+         * Show success message
+         */
+
+        /**
+         * Handle keyboard shortcuts
+         */
+        handleKeyboardShortcuts: function(e) {
+            // Ctrl/Cmd + S to save
+            if ((e.ctrlKey || e.metaKey) && e.keyCode === 83) {
+                e.preventDefault();
+                $('#ultimate-watermark-settings-form').submit();
+            }
         }
     };
 
-    watermarkFileUpload.init();
-
-    $(document).on('click', '.ultimate_watermark_remove_image_button', function (event) {
-        $(this).attr('disabled', 'true');
-        $(this).closest('.ultimate-watermark-setting-card').find('input.attachment_id').val(0);
-        $(this).closest('.ultimate-watermark-setting-card').find('.preview-image').hide();
+    // Initialize when document is ready
+    $(document).ready(function() {
+        SettingsPage.init();
     });
 
-});
+    // Make SettingsPage available globally
+    window.SettingsPage = SettingsPage;
+
+})(jQuery);
